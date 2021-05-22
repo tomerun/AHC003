@@ -94,12 +94,12 @@ class LocalJudge
     @score = 0.0
     m = @rnd.rand(2) + 1
     d = @rnd.rand(2000 - 100 + 1) + 100
-    if 100 <= @seed && @seed < 150
+    if 100 <= @seed && @seed < 200
       m = 1
-      d = 100 + (2000 - 100) * (@seed - 100) // 49
-    elsif 150 <= @seed && @seed < 200
+      d = 100 + (2000 - 100) * (@seed - 100) // 99
+    elsif 200 <= @seed && @seed < 300
       m = 2
-      d = 100 + (2000 - 100) * (@seed - 150) // 49
+      d = 100 + (2000 - 100) * (@seed - 200) // 99
     end
     debugf("m:%1d d:%4d\n", m, d)
     @horz = generate_edge(d, m)
