@@ -1,7 +1,7 @@
 START_TIME = Time.utc.to_unix_ms
 TL         = 1800
 N          =   30
-INF        =  1e9
+INF        = 1 << 28
 COUNTER    = Counter.new
 DIR_CHARS  = "UDLR".chars
 DIR_U      = 0
@@ -64,10 +64,6 @@ macro debugf(format_string, *args)
   {% if flag?(:local) %}
     STDERR.printf({{format_string}}, {{*args}})
   {% end %}
-end
-
-macro chmin(ary, i, j, k, l, v)
-  ary[i][j][k][k] = {ary[i][j][k][k], v}.min
 end
 
 class AtCoderJudge
@@ -179,7 +175,7 @@ class LocalJudge
     @score *= 0.998
     @score += sd / dist
     e = @rnd.rand * 0.2 + 0.9
-    # debugf("qi:%d best:%d actual:%d\n", @qi, sd, dist)
+    debugf("qi:%d best:%d actual:%d\n", @qi, sd, dist)
     @qi += 1
     if f = @input_file
       f << @sr << " " << @sc << " " << @tr << " " << @tc << " " << sd << " " << e << "\n"
@@ -193,7 +189,7 @@ class LocalJudge
         f.close
       end
     end
-    return (dist * e).round
+    return (dist * e).round.to_i
   end
 
   private def calc_shortest_dist
@@ -308,6 +304,10 @@ class PriorityQueue(T)
   end
 end
 
+#################
+# end of lib
+#################
+
 main
 
 def main
@@ -320,12 +320,32 @@ def main
   solver.solve
   {% if flag?(:local) %}
     printf("%.3f\n", judge.score * 2.312311)
+    printf("%dms\n", Time.utc.to_unix_ms - START_TIME)
   {% end %}
 end
 
+class History
+  getter :sr, :sc, :tr, :tc, :path, :b
+
+  def initialize(@sr : Int32, @sc : Int32, @tr : Int32, @tc : Int32, @path : Array(Int32), @b : Int32)
+  end
+end
+
 class Solver(Judge)
+  @ita : Float64
+  @ita2 : Float64
+
   def initialize(@judge : Judge, @timelimit : Int64)
     @rnd = XorShift.new(2u64)
+    @e_horz = Array(Array(Int32)).new(N) { [5000] * (N - 1) }
+    @e_vert = Array(Array(Int32)).new(N - 1) { [5000] * N }
+    @sp_visited = Array(Array(Int32)).new(N) { [INF] * N }
+    @sp_dir = Array(Array(Int32)).new(N) { [0] * N }
+    @sp_q = PriorityQueue(Tuple(Int32, Int32, Int32)).new(N * N)
+    @history = Array(History).new
+    @qi = 0
+    @ita = (ENV["ita"]? || "0.7").to_f
+    @ita2 = (ENV["ita2"]? || "0.1").to_f
   end
 
   def solve
@@ -336,19 +356,127 @@ class Solver(Judge)
         sr, tr = tr, sr
         sc, tc = tc, sc
       end
-      ans = [] of Int32
-      (tr - sr).times do
-        ans << DIR_D
+      path = select_path(sr, sc, tr, tc)
+      rough_dist = @judge.response(rev ? path.reverse.map { |v| v ^ 1 } : path)
+      @history << History.new(sr, sc, tr, tc, path, rough_dist)
+      postprocess(sr, sc, tr, tc, path, rough_dist)
+      @qi += 1
+    end
+    @e_horz.each do |row|
+      debug(row.join(" "))
+    end
+    debug("")
+    @e_vert.each do |row|
+      debug(row.join(" "))
+    end
+  end
+
+  def select_path(sr, sc, tr, tc)
+    @sp_q.clear
+    @sp_q.add({0, sr, sc})
+    N.times do |i|
+      @sp_visited[i].fill(INF)
+    end
+    @sp_visited[sr][sc] = 0
+    while true
+      cur = @sp_q.pop
+      cd, cr, cc = -cur[0], cur[1], cur[2]
+      break if cr == tr && cc == tc
+      if cr != 0
+        nd = cd + @e_vert[cr - 1][cc]
+        if nd < @sp_visited[cr - 1][cc]
+          @sp_visited[cr - 1][cc] = nd
+          @sp_dir[cr - 1][cc] = DIR_U
+          @sp_q.add({-nd, cr - 1, cc})
+        end
       end
-      if sc < tc
-        ans += [DIR_R] * (tc - sc)
-      else
-        ans += [DIR_L] * (sc - tc)
+      if cr != N - 1
+        nd = cd + @e_vert[cr][cc]
+        if nd < @sp_visited[cr + 1][cc]
+          @sp_visited[cr + 1][cc] = nd
+          @sp_dir[cr + 1][cc] = DIR_D
+          @sp_q.add({-nd, cr + 1, cc})
+        end
       end
-      if rev
-        ans = ans.reverse.map { |v| v ^ 1 }
+      if cc != 0
+        nd = cd + @e_horz[cr][cc - 1]
+        if nd < @sp_visited[cr][cc - 1]
+          @sp_visited[cr][cc - 1] = nd
+          @sp_dir[cr][cc - 1] = DIR_L
+          @sp_q.add({-nd, cr, cc - 1})
+        end
       end
-      rough_dist = @judge.response(ans)
+      if cc != N - 1
+        nd = cd + @e_horz[cr][cc]
+        if nd < @sp_visited[cr][cc + 1]
+          @sp_visited[cr][cc + 1] = nd
+          @sp_dir[cr][cc + 1] = DIR_R
+          @sp_q.add({-nd, cr, cc + 1})
+        end
+      end
+    end
+    ans = [] of Int32
+    cr = tr
+    cc = tc
+    while cr != sr || cc != sc
+      ans << @sp_dir[cr][cc]
+      cr -= DR[ans[-1]]
+      cc -= DC[ans[-1]]
+    end
+    return ans.reverse
+  end
+
+  def postprocess(sr, sc, tr, tc, path, b)
+    ita = @ita
+    @history.reverse.each do |h|
+      sum = 0
+      cr = h.sr
+      cc = h.sc
+      h.path.each do |d|
+        case d
+        when DIR_U
+          sum += @e_vert[cr - 1][cc]
+          cr -= 1
+        when DIR_D
+          sum += @e_vert[cr][cc]
+          cr += 1
+        when DIR_L
+          sum += @e_horz[cr][cc - 1]
+          cc -= 1
+        when DIR_R
+          sum += @e_horz[cr][cc]
+          cc += 1
+        end
+      end
+      diff = ((h.b - sum) * ita / h.path.size).to_i
+      # debugf("b:%d sum:%d diff:%d\n", h.b, sum, diff)
+      cr = h.sr
+      cc = h.sc
+      h.path.each do |d|
+        case d
+        when DIR_U
+          @e_vert[cr - 1][cc] += diff
+          @e_vert[cr - 1][cc] = {@e_vert[cr - 1][cc], 1000}.max
+          @e_vert[cr - 1][cc] = {@e_vert[cr - 1][cc], 9000}.min
+          cr -= 1
+        when DIR_D
+          @e_vert[cr][cc] += diff
+          @e_vert[cr][cc] = {@e_vert[cr][cc], 1000}.max
+          @e_vert[cr][cc] = {@e_vert[cr][cc], 9000}.min
+          cr += 1
+        when DIR_L
+          @e_horz[cr][cc - 1] += diff
+          @e_horz[cr][cc - 1] = {@e_horz[cr][cc - 1], 1000}.max
+          @e_horz[cr][cc - 1] = {@e_horz[cr][cc - 1], 9000}.min
+          cc -= 1
+        when DIR_R
+          @e_horz[cr][cc] += diff
+          @e_horz[cr][cc] = {@e_horz[cr][cc], 1000}.max
+          @e_horz[cr][cc] = {@e_horz[cr][cc], 9000}.min
+          cc += 1
+        end
+      end
+      ita = @ita2
     end
   end
 end
