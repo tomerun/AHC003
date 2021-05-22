@@ -1,0 +1,10 @@
+*.dwarf
+*.svg
+log.txt
+solver.zip
+main
+in/
+result/
+tools/
+tools_linux/
+out/
