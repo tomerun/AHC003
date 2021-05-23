@@ -55,13 +55,13 @@ class Counter
 end
 
 macro debug(msg)
-  {% if flag?(:local) %}
+  {% if flag?(:debug) %}
     STDERR.puts({{msg}})
   {% end %}
 end
 
 macro debugf(format_string, *args)
-  {% if flag?(:local) %}
+  {% if flag?(:debug) %}
     STDERR.printf({{format_string}}, {{*args}})
   {% end %}
 end
@@ -105,8 +105,10 @@ class LocalJudge
     @tr = 0
     @tc = 0
     @qi = 0
-    @input_file = File.new("out/#{@seed}.in.txt", "w")
-    @output_file = File.new("out/#{@seed}.out.txt", "w")
+    {% if flag?(:debug) %}
+      @input_file = File.new("out/#{@seed}.in.txt", "w")
+      @output_file = File.new("out/#{@seed}.out.txt", "w")
+    {% end %}
     if f = @input_file
       N.times do |i|
         f << @horz[i].join(" ") << "\n"
@@ -339,6 +341,8 @@ class Solver(Judge)
     @rnd = XorShift.new(2u64)
     @e_horz = Array(Array(Int32)).new(N) { [5000] * (N - 1) }
     @e_vert = Array(Array(Int32)).new(N - 1) { [5000] * N }
+    @c_horz = Array(Array(Int32)).new(N) { [0] * (N - 1) }
+    @c_vert = Array(Array(Int32)).new(N - 1) { [0] * N }
     @sp_visited = Array(Array(Int32)).new(N) { [INF] * N }
     @sp_dir = Array(Array(Int32)).new(N) { [0] * N }
     @sp_q = PriorityQueue(Tuple(Int32, Int32, Int32)).new(N * N)
@@ -372,47 +376,72 @@ class Solver(Judge)
   end
 
   def select_path(sr, sc, tr, tc)
-    @sp_q.clear
-    @sp_q.add({0, sr, sc})
-    N.times do |i|
-      @sp_visited[i].fill(INF)
-    end
-    @sp_visited[sr][sc] = 0
-    while true
-      cur = @sp_q.pop
-      cd, cr, cc = -cur[0], cur[1], cur[2]
-      break if cr == tr && cc == tc
-      if cr != 0
-        nd = cd + @e_vert[cr - 1][cc]
-        if nd < @sp_visited[cr - 1][cc]
-          @sp_visited[cr - 1][cc] = nd
-          @sp_dir[cr - 1][cc] = DIR_U
-          @sp_q.add({-nd, cr - 1, cc})
+    bonus_unvisited = (ENV["bonus"]? || "1500").to_i
+    th_ave_cost = (ENV["th_ave_b"]? || "2500").to_i + @qi * (ENV["th_ave_m"]? || "4").to_i
+    2.times do |li|
+      @sp_q.clear
+      @sp_q.add({0, sr, sc})
+      N.times do |i|
+        @sp_visited[i].fill(INF)
+      end
+      @sp_visited[sr][sc] = 0
+      total_dist = 0
+      while true
+        cur = @sp_q.pop
+        cd, cr, cc = -cur[0], cur[1], cur[2]
+        if cr == tr && cc == tc
+          total_dist = cd
+          break
+        end
+        if cr != 0
+          nd = cd + @e_vert[cr - 1][cc]
+          if li != 0 && @c_vert[cr - 1][cc] == 0
+            nd -= bonus_unvisited
+          end
+          if nd < @sp_visited[cr - 1][cc]
+            @sp_visited[cr - 1][cc] = nd
+            @sp_dir[cr - 1][cc] = DIR_U
+            @sp_q.add({-nd, cr - 1, cc})
+          end
+        end
+        if cr != N - 1
+          nd = cd + @e_vert[cr][cc]
+          if li != 0 && @c_vert[cr][cc] == 0
+            nd -= bonus_unvisited
+          end
+          if nd < @sp_visited[cr + 1][cc]
+            @sp_visited[cr + 1][cc] = nd
+            @sp_dir[cr + 1][cc] = DIR_D
+            @sp_q.add({-nd, cr + 1, cc})
+          end
+        end
+        if cc != 0
+          nd = cd + @e_horz[cr][cc - 1]
+          if li != 0 && @c_horz[cr][cc - 1] == 0
+            nd -= bonus_unvisited
+          end
+          if nd < @sp_visited[cr][cc - 1]
+            @sp_visited[cr][cc - 1] = nd
+            @sp_dir[cr][cc - 1] = DIR_L
+            @sp_q.add({-nd, cr, cc - 1})
+          end
+        end
+        if cc != N - 1
+          nd = cd + @e_horz[cr][cc]
+          if li != 0 && @c_horz[cr][cc] == 0
+            nd -= bonus_unvisited
+          end
+          if nd < @sp_visited[cr][cc + 1]
+            @sp_visited[cr][cc + 1] = nd
+            @sp_dir[cr][cc + 1] = DIR_R
+            @sp_q.add({-nd, cr, cc + 1})
+          end
         end
       end
-      if cr != N - 1
-        nd = cd + @e_vert[cr][cc]
-        if nd < @sp_visited[cr + 1][cc]
-          @sp_visited[cr + 1][cc] = nd
-          @sp_dir[cr + 1][cc] = DIR_D
-          @sp_q.add({-nd, cr + 1, cc})
-        end
-      end
-      if cc != 0
-        nd = cd + @e_horz[cr][cc - 1]
-        if nd < @sp_visited[cr][cc - 1]
-          @sp_visited[cr][cc - 1] = nd
-          @sp_dir[cr][cc - 1] = DIR_L
-          @sp_q.add({-nd, cr, cc - 1})
-        end
-      end
-      if cc != N - 1
-        nd = cd + @e_horz[cr][cc]
-        if nd < @sp_visited[cr][cc + 1]
-          @sp_visited[cr][cc + 1] = nd
-          @sp_dir[cr][cc + 1] = DIR_R
-          @sp_q.add({-nd, cr, cc + 1})
-        end
+      if li == 0
+        ave_cost = total_dist // ((sr - tr).abs + (sc - tc).abs)
+        debugf("%d ave_cost:%d th_ave_cost:%d\n", @qi, ave_cost, th_ave_cost)
+        break if ave_cost < th_ave_cost
       end
     end
     ans = [] of Int32
@@ -420,8 +449,20 @@ class Solver(Judge)
     cc = tc
     while cr != sr || cc != sc
       ans << @sp_dir[cr][cc]
-      cr -= DR[ans[-1]]
-      cc -= DC[ans[-1]]
+      case ans[-1]
+      when DIR_U
+        @c_vert[cr][cc] += 1
+        cr += 1
+      when DIR_D
+        @c_vert[cr - 1][cc] += 1
+        cr -= 1
+      when DIR_L
+        @c_horz[cr][cc] += 1
+        cc += 1
+      when DIR_R
+        @c_horz[cr][cc - 1] += 1
+        cc -= 1
+      end
     end
     return ans.reverse
   end
