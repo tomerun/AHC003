@@ -74,7 +74,8 @@ class AtCoderJudge
 
   def response(path)
     puts path.map { |d| DIR_CHARS[d] }.join
-    return read_line.to_f
+    STDOUT.flush
+    return read_line.to_i
   end
 end
 
@@ -396,7 +397,7 @@ class Solver(Judge)
         if cr != 0
           nd = cd + @e_vert[cr - 1][cc]
           if li != 0 && @c_vert[cr - 1][cc] == 0
-            nd -= bonus_unvisited
+            nd -= {bonus_unvisited, @e_vert[cr - 1][cc]}.min
           end
           if nd < @sp_visited[cr - 1][cc]
             @sp_visited[cr - 1][cc] = nd
@@ -407,7 +408,7 @@ class Solver(Judge)
         if cr != N - 1
           nd = cd + @e_vert[cr][cc]
           if li != 0 && @c_vert[cr][cc] == 0
-            nd -= bonus_unvisited
+            nd -= {bonus_unvisited, @e_vert[cr][cc]}.min
           end
           if nd < @sp_visited[cr + 1][cc]
             @sp_visited[cr + 1][cc] = nd
@@ -418,7 +419,7 @@ class Solver(Judge)
         if cc != 0
           nd = cd + @e_horz[cr][cc - 1]
           if li != 0 && @c_horz[cr][cc - 1] == 0
-            nd -= bonus_unvisited
+            nd -= {bonus_unvisited, @e_horz[cr][cc - 1]}.min
           end
           if nd < @sp_visited[cr][cc - 1]
             @sp_visited[cr][cc - 1] = nd
@@ -429,7 +430,7 @@ class Solver(Judge)
         if cc != N - 1
           nd = cd + @e_horz[cr][cc]
           if li != 0 && @c_horz[cr][cc] == 0
-            nd -= bonus_unvisited
+            nd -= {bonus_unvisited, @e_horz[cr][cc]}.min
           end
           if nd < @sp_visited[cr][cc + 1]
             @sp_visited[cr][cc + 1] = nd
@@ -518,6 +519,65 @@ class Solver(Judge)
         end
       end
       ita = @ita2
+    end
+    smoothing()
+    # @e_horz.each do |row|
+    #   debug(row.join(" "))
+    # end
+    # debug("")
+    # @e_vert.each do |row|
+    #   debug(row.join(" "))
+    # end
+  end
+
+  def smoothing
+    mul = (ENV["smo_r"]? || "0.4").to_f
+    len = (ENV["smo_l"]? || "2").to_i
+    sum = Array.new(N, 0)
+    buf = Array.new(N - 1, 0)
+    N.times do |i|
+      (N - 1).times do |j|
+        sum[j + 1] = sum[j] + @e_horz[i][j]
+      end
+      (N - 1).times do |j|
+        left = j - len
+        right = j + len
+        if left < 0
+          right += -left
+          left = 0
+        end
+        if right >= N - 1
+          left -= (right - N + 2)
+          right = N - 2
+        end
+        ave = (sum[right + 1] - sum[left]) / (len * 2 + 1)
+        buf[j] = @e_horz[i][j] + ((ave - @e_horz[i][j]) * mul).to_i
+      end
+      (N - 1).times do |j|
+        @e_horz[i][j] = buf[j]
+      end
+    end
+    N.times do |i|
+      (N - 1).times do |j|
+        sum[j + 1] = sum[j] + @e_vert[j][i]
+      end
+      (N - 1).times do |j|
+        top = j - len
+        bottom = j + len
+        if top < 0
+          bottom += -top
+          top = 0
+        end
+        if bottom >= N - 1
+          top -= (bottom - N + 2)
+          bottom = N - 2
+        end
+        ave = (sum[bottom + 1] - sum[top]) / (len * 2 + 1)
+        buf[j] = @e_vert[j][i] + ((ave - @e_vert[j][i]) * mul).to_i
+      end
+      (N - 1).times do |j|
+        @e_vert[j][i] = buf[j]
+      end
     end
   end
 end
