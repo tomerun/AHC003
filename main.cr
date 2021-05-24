@@ -55,13 +55,13 @@ class Counter
 end
 
 macro debug(msg)
-  {% if flag?(:debug) %}
+  {% if flag?(:trace) %}
     STDERR.puts({{msg}})
   {% end %}
 end
 
 macro debugf(format_string, *args)
-  {% if flag?(:debug) %}
+  {% if flag?(:trace) %}
     STDERR.printf({{format_string}}, {{*args}})
   {% end %}
 end
@@ -106,7 +106,7 @@ class LocalJudge
     @tr = 0
     @tc = 0
     @qi = 0
-    {% if flag?(:debug) %}
+    {% if flag?(:trace) %}
       @input_file = File.new("out/#{@seed}.in.txt", "w")
       @output_file = File.new("out/#{@seed}.out.txt", "w")
     {% end %}
@@ -340,10 +340,14 @@ class Solver(Judge)
 
   def initialize(@judge : Judge, @timelimit : Int64)
     @rnd = XorShift.new(2u64)
-    @e_horz = Array(Array(Int32)).new(N) { [5000] * (N - 1) }
-    @e_vert = Array(Array(Int32)).new(N - 1) { [5000] * N }
+    @e_horz = Array(Array(Int32)).new(N) do |i|
+      [5000] * (N - 1)
+    end
+    @e_vert = Array(Array(Int32)).new(N) do |i|
+      [5000] * (N - 1)
+    end
     @c_horz = Array(Array(Int32)).new(N) { [0] * (N - 1) }
-    @c_vert = Array(Array(Int32)).new(N - 1) { [0] * N }
+    @c_vert = Array(Array(Int32)).new(N) { [0] * (N - 1) }
     @sp_visited = Array(Array(Int32)).new(N) { [INF] * N }
     @sp_dir = Array(Array(Int32)).new(N) { [0] * N }
     @sp_q = PriorityQueue(Tuple(Int32, Int32, Int32)).new(N * N)
@@ -371,7 +375,7 @@ class Solver(Judge)
       debug(row.join(" "))
     end
     debug("")
-    @e_vert.each do |row|
+    @e_vert.transpose.each do |row|
       debug(row.join(" "))
     end
   end
@@ -395,9 +399,9 @@ class Solver(Judge)
           break
         end
         if cr != 0
-          nd = cd + @e_vert[cr - 1][cc]
-          if li != 0 && @c_vert[cr - 1][cc] == 0
-            nd -= {bonus_unvisited, @e_vert[cr - 1][cc]}.min
+          nd = cd + @e_vert[cc][cr - 1]
+          if li != 0 && @c_vert[cc][cr - 1] == 0
+            nd -= {bonus_unvisited, @e_vert[cc][cr - 1]}.min
           end
           if nd < @sp_visited[cr - 1][cc]
             @sp_visited[cr - 1][cc] = nd
@@ -406,9 +410,9 @@ class Solver(Judge)
           end
         end
         if cr != N - 1
-          nd = cd + @e_vert[cr][cc]
-          if li != 0 && @c_vert[cr][cc] == 0
-            nd -= {bonus_unvisited, @e_vert[cr][cc]}.min
+          nd = cd + @e_vert[cc][cr]
+          if li != 0 && @c_vert[cc][cr] == 0
+            nd -= {bonus_unvisited, @e_vert[cc][cr]}.min
           end
           if nd < @sp_visited[cr + 1][cc]
             @sp_visited[cr + 1][cc] = nd
@@ -452,10 +456,10 @@ class Solver(Judge)
       ans << @sp_dir[cr][cc]
       case ans[-1]
       when DIR_U
-        @c_vert[cr][cc] += 1
+        @c_vert[cc][cr] += 1
         cr += 1
       when DIR_D
-        @c_vert[cr - 1][cc] += 1
+        @c_vert[cc][cr - 1] += 1
         cr -= 1
       when DIR_L
         @c_horz[cr][cc] += 1
@@ -477,10 +481,10 @@ class Solver(Judge)
       h.path.each do |d|
         case d
         when DIR_U
-          sum += @e_vert[cr - 1][cc]
+          sum += @e_vert[cc][cr - 1]
           cr -= 1
         when DIR_D
-          sum += @e_vert[cr][cc]
+          sum += @e_vert[cc][cr]
           cr += 1
         when DIR_L
           sum += @e_horz[cr][cc - 1]
@@ -497,14 +501,14 @@ class Solver(Judge)
       h.path.each do |d|
         case d
         when DIR_U
-          @e_vert[cr - 1][cc] += diff
-          @e_vert[cr - 1][cc] = {@e_vert[cr - 1][cc], 1000}.max
-          @e_vert[cr - 1][cc] = {@e_vert[cr - 1][cc], 9000}.min
+          @e_vert[cc][cr - 1] += diff
+          @e_vert[cc][cr - 1] = {@e_vert[cc][cr - 1], 1000}.max
+          @e_vert[cc][cr - 1] = {@e_vert[cc][cr - 1], 9000}.min
           cr -= 1
         when DIR_D
-          @e_vert[cr][cc] += diff
-          @e_vert[cr][cc] = {@e_vert[cr][cc], 1000}.max
-          @e_vert[cr][cc] = {@e_vert[cr][cc], 9000}.min
+          @e_vert[cc][cr] += diff
+          @e_vert[cc][cr] = {@e_vert[cc][cr], 1000}.max
+          @e_vert[cc][cr] = {@e_vert[cc][cr], 9000}.min
           cr += 1
         when DIR_L
           @e_horz[cr][cc - 1] += diff
@@ -559,7 +563,7 @@ class Solver(Judge)
     end
     N.times do |i|
       (N - 1).times do |j|
-        sum[j + 1] = sum[j] + @e_vert[j][i]
+        sum[j + 1] = sum[j] + @e_vert[i][j]
       end
       (N - 1).times do |j|
         top = j - len
@@ -573,10 +577,10 @@ class Solver(Judge)
           bottom = N - 2
         end
         ave = (sum[bottom + 1] - sum[top]) / (len * 2 + 1)
-        buf[j] = @e_vert[j][i] + ((ave - @e_vert[j][i]) * mul).to_i
+        buf[j] = @e_vert[i][j] + ((ave - @e_vert[i][j]) * mul).to_i
       end
       (N - 1).times do |j|
-        @e_vert[j][i] = buf[j]
+        @e_vert[i][j] = buf[j]
       end
     end
   end
