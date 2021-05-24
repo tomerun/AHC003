@@ -7,7 +7,7 @@ crystal build --release -D local main.cr
 for (( i = $SEED_START; i < $SEED_END; i++ )); do
 	seed=$(printf "%04d" $i)
 	echo -n "seed:${seed} " >> log.txt
-	./main $seed >> log.txt  2> /dev/null
+	./main $seed >> log.txt
 done
 
 aws s3 cp log.txt s3://marathon-tester/$RESULT_PATH/$(printf "%03d" $SEED_START).txt
