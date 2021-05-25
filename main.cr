@@ -474,50 +474,57 @@ class Solver(Judge)
   end
 
   def postprocess(sr, sc, tr, tc, path, b)
+    div = (ENV["postprocess_d"]? || "2").to_i
     ita = @ita
     @history.reverse.each do |h|
       sum = 0
+      sum_ratio = 0.0
       cr = h.sr
       cc = h.sc
       h.path.each do |d|
         case d
         when DIR_U
           sum += @e_vert[cc][cr - 1]
+          sum_ratio += 1.0 / (@c_vert[cc][cr - 1] + div)
           cr -= 1
         when DIR_D
           sum += @e_vert[cc][cr]
+          sum_ratio += 1.0 / (@c_vert[cc][cr] + div)
           cr += 1
         when DIR_L
           sum += @e_horz[cr][cc - 1]
+          sum_ratio += 1.0 / (@c_horz[cr][cc - 1] + div)
           cc -= 1
         when DIR_R
           sum += @e_horz[cr][cc]
+          sum_ratio += 1.0 / (@c_horz[cr][cc] + div)
           cc += 1
         end
       end
-      diff = ((h.b - sum) * ita / h.path.size).to_i
+      diff = (h.b - sum) * ita / sum_ratio
+      # diff = ((h.b - sum) * ita / h.path.size).to_i
       # debugf("b:%d sum:%d diff:%d\n", h.b, sum, diff)
       cr = h.sr
       cc = h.sc
       h.path.each do |d|
         case d
         when DIR_U
-          @e_vert[cc][cr - 1] += diff
+          @e_vert[cc][cr - 1] += (diff * 1.0 / (@c_vert[cc][cr - 1] + div)).to_i
           @e_vert[cc][cr - 1] = {@e_vert[cc][cr - 1], 1000}.max
           @e_vert[cc][cr - 1] = {@e_vert[cc][cr - 1], 9000}.min
           cr -= 1
         when DIR_D
-          @e_vert[cc][cr] += diff
+          @e_vert[cc][cr] += (diff * 1.0 / (@c_vert[cc][cr] + div)).to_i
           @e_vert[cc][cr] = {@e_vert[cc][cr], 1000}.max
           @e_vert[cc][cr] = {@e_vert[cc][cr], 9000}.min
           cr += 1
         when DIR_L
-          @e_horz[cr][cc - 1] += diff
+          @e_horz[cr][cc - 1] += (diff * 1.0 / (@c_horz[cr][cc - 1] + div)).to_i
           @e_horz[cr][cc - 1] = {@e_horz[cr][cc - 1], 1000}.max
           @e_horz[cr][cc - 1] = {@e_horz[cr][cc - 1], 9000}.min
           cc -= 1
         when DIR_R
-          @e_horz[cr][cc] += diff
+          @e_horz[cr][cc] += (diff * 1.0 / (@c_horz[cr][cc] + div)).to_i
           @e_horz[cr][cc] = {@e_horz[cr][cc], 1000}.max
           @e_horz[cr][cc] = {@e_horz[cr][cc], 9000}.min
           cc += 1
