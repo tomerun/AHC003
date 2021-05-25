@@ -370,19 +370,22 @@ class Solver(Judge)
       @history << History.new(sr, sc, tr, tc, path, rough_dist)
       postprocess(sr, sc, tr, tc, path, rough_dist)
       @qi += 1
-    end
-    @e_horz.each do |row|
-      debug(row.join(" "))
-    end
-    debug("")
-    @e_vert.transpose.each do |row|
-      debug(row.join(" "))
+      if @qi % 100 == 0
+        @c_horz.each do |row|
+          debug(row.map { |v| sprintf("%2d", v) }.join(" "))
+        end
+        debug("")
+        @c_vert.transpose.each do |row|
+          debug(row.map { |v| sprintf("%2d", v) }.join(" "))
+        end
+        debug("")
+      end
     end
   end
 
   def select_path(sr, sc, tr, tc)
-    bonus_unvisited = (ENV["bonus"]? || "1500").to_i
-    th_ave_cost = (ENV["th_ave_b"]? || "2500").to_i + @qi * (ENV["th_ave_m"]? || "4").to_i
+    bonus_unvisited = (ENV["bonus"]? || "2000").to_i
+    th_ave_cost = (ENV["th_ave_b"]? || "2000").to_i + @qi * (ENV["th_ave_m"]? || "4").to_i
     2.times do |li|
       @sp_q.clear
       @sp_q.add({0, sr, sc})
@@ -400,8 +403,8 @@ class Solver(Judge)
         end
         if cr != 0
           nd = cd + @e_vert[cc][cr - 1]
-          if li != 0 && @c_vert[cc][cr - 1] == 0
-            nd -= {bonus_unvisited, @e_vert[cc][cr - 1]}.min
+          if li != 0
+            nd -= {bonus_unvisited // (@c_vert[cc][cr - 1] + 1), @e_vert[cc][cr - 1]}.min
           end
           if nd < @sp_visited[cr - 1][cc]
             @sp_visited[cr - 1][cc] = nd
@@ -411,8 +414,8 @@ class Solver(Judge)
         end
         if cr != N - 1
           nd = cd + @e_vert[cc][cr]
-          if li != 0 && @c_vert[cc][cr] == 0
-            nd -= {bonus_unvisited, @e_vert[cc][cr]}.min
+          if li != 0
+            nd -= {bonus_unvisited // (@c_vert[cc][cr] + 1), @e_vert[cc][cr]}.min
           end
           if nd < @sp_visited[cr + 1][cc]
             @sp_visited[cr + 1][cc] = nd
@@ -422,8 +425,8 @@ class Solver(Judge)
         end
         if cc != 0
           nd = cd + @e_horz[cr][cc - 1]
-          if li != 0 && @c_horz[cr][cc - 1] == 0
-            nd -= {bonus_unvisited, @e_horz[cr][cc - 1]}.min
+          if li != 0
+            nd -= {bonus_unvisited // (@c_horz[cr][cc - 1] + 1), @e_horz[cr][cc - 1]}.min
           end
           if nd < @sp_visited[cr][cc - 1]
             @sp_visited[cr][cc - 1] = nd
@@ -433,8 +436,8 @@ class Solver(Judge)
         end
         if cc != N - 1
           nd = cd + @e_horz[cr][cc]
-          if li != 0 && @c_horz[cr][cc] == 0
-            nd -= {bonus_unvisited, @e_horz[cr][cc]}.min
+          if li != 0
+            nd -= {bonus_unvisited // (@c_horz[cr][cc] + 1), @e_horz[cr][cc]}.min
           end
           if nd < @sp_visited[cr][cc + 1]
             @sp_visited[cr][cc + 1] = nd
@@ -443,11 +446,9 @@ class Solver(Judge)
           end
         end
       end
-      if li == 0
-        ave_cost = total_dist // ((sr - tr).abs + (sc - tc).abs)
-        debugf("%d ave_cost:%d th_ave_cost:%d\n", @qi, ave_cost, th_ave_cost)
-        break if ave_cost < th_ave_cost
-      end
+      ave_cost = total_dist // ((sr - tr).abs + (sc - tc).abs)
+      debugf("%d ave_cost:%d th_ave_cost:%d\n", @qi, ave_cost, th_ave_cost)
+      break if ave_cost < th_ave_cost
     end
     ans = [] of Int32
     cr = tr
