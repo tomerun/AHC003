@@ -348,11 +348,33 @@ def main
 end
 
 class History
-  getter :sr, :sc, :tr, :tc, :path, :b
-  property :sum_ratio
+  getter :sr, :sc, :tr, :tc, :path, :b, :hs, :vs
+  property :sum_ratio, :dif_hist, :skip_until
 
   def initialize(@sr : Int32, @sc : Int32, @tr : Int32, @tc : Int32, @path : Array(Int32), @b : Int32)
+    @hs = Array(Tuple(Int32, Int32)).new
+    @vs = Array(Tuple(Int32, Int32)).new
+    @dif_hist = Array(Tuple(Int32, Float64)).new
+    @skip_until = 0
     @sum_ratio = 0.0
+    cr = @sr
+    cc = @sc
+    @path.each do |d|
+      case d
+      when DIR_U
+        cr -= 1
+        @vs << {cc, cr}
+      when DIR_D
+        @vs << {cc, cr}
+        cr += 1
+      when DIR_L
+        cc -= 1
+        @hs << {cr, cc}
+      when DIR_R
+        @hs << {cr, cc}
+        cc += 1
+      end
+    end
   end
 end
 
@@ -379,11 +401,12 @@ class Solver(Judge)
     @qi = 0
     @ita = (ENV["ita"]? || "0.7").to_f
     @ita2 = (ENV["ita2"]? || "0.1").to_f
+    @is_m0 = false
   end
 
   def solve
-    pred_freq = (ENV["pred_freq"]? || "10").to_i
-    pred_cut = 900
+    pred_freq = (ENV["pred_freq"]? || "5").to_i
+    pred_cut = (ENV["pred_cut"]? || "1000").to_i
     1000.times do
       sr, sc, tr, tc = @judge.query
       rev = sr > tr
@@ -397,23 +420,25 @@ class Solver(Judge)
       @qi += 1
       if @qi < pred_cut && @qi % pred_freq == 0
         predict()
-        # debug("with smoothing")
-        # @e_horz.each do |row|
-        #   debug(row.join(" "))
-        # end
-        # debug("")
-        # @e_vert.each do |row|
-        #   debug(row.join(" "))
-        # end
-        # debug("")
-        # @c_horz.each do |row|
-        #   debug(row.map { |v| sprintf("%3d", v) }.join(" "))
-        # end
-        # debug("")
-        # @c_vert.each do |row|
-        #   debug(row.map { |v| sprintf("%3d", v) }.join(" "))
-        # end
-        # debug("")
+        if @qi % 100 == 0
+          debug("predict qi=#{@qi}")
+          @e_horz.each do |row|
+            debug(row.join(" "))
+          end
+          debug("")
+          @e_vert.each do |row|
+            debug(row.join(" "))
+          end
+          debug("")
+          @c_horz.each do |row|
+            debug(row.map { |v| sprintf("%3d", v) }.join(" "))
+          end
+          debug("")
+          @c_vert.each do |row|
+            debug(row.map { |v| sprintf("%3d", v) }.join(" "))
+          end
+          debug("")
+        end
       else
         postprocess()
       end
@@ -512,179 +537,185 @@ class Solver(Judge)
 
   def predict
     div = (ENV["repre_div"]? || "15").to_i
-    ita = (ENV["repre_ita"]? || "0.5").to_f
-    rep = (ENV["repre_loop"]? || "200").to_i
-    e_horz = Array.new(N) { [5000] * (N - 1) }
-    e_vert = Array.new(N) { [5000] * (N - 1) }
+    ita = (ENV["repre_ita"]? || "8").to_i * 0.1
+    rep = (ENV["repre_loop"]? || "50").to_i
+    start_detect_x = (ENV["start_detect_x"]? || "500").to_i
+    {% if !flag?(:local) %}
+      elapsed = Time.utc.to_unix_ms - START_TIME
+      if elapsed > 1950
+        debug("timeout:#{@qi} #{elapsed}")
+        rep = 0
+      elsif elapsed > 1850
+        debug("timeout:#{@qi} #{elapsed}")
+        rep = 1
+      end
+    {% end %}
+    dif_max = 1.05
+    dif_min = 0.95
+
     @history.each do |h|
+      h.skip_until = 0
+      h.dif_hist.clear
       h.sum_ratio = 0.0
-      cr = h.sr
-      cc = h.sc
-      h.path.each do |d|
-        case d
-        when DIR_U
-          h.sum_ratio += 1.0 / (@c_vert[cc][cr - 1] + div)
-          cr -= 1
-        when DIR_D
-          h.sum_ratio += 1.0 / (@c_vert[cc][cr] + div)
-          cr += 1
-        when DIR_L
-          h.sum_ratio += 1.0 / (@c_horz[cr][cc - 1] + div)
-          cc -= 1
-        when DIR_R
-          h.sum_ratio += 1.0 / (@c_horz[cr][cc] + div)
-          cc += 1
-        end
+      h.hs.each do |p|
+        h.sum_ratio += 1.0 / (@c_horz[p[0]][p[1]] + div)
+      end
+      h.vs.each do |p|
+        h.sum_ratio += 1.0 / (@c_vert[p[0]][p[1]] + div)
       end
     end
-    rep.times do
-      hs = @history.dup
+    hs = @history.dup
+    rep.times do |l|
       (@history.size - 1).times do |i|
         pos = @rnd.next_int(@history.size - i).to_i + i
         hs[i], hs[pos] = hs[pos], hs[i]
       end
       hs.each do |h|
-        sum = 0
-        cr = h.sr
-        cc = h.sc
-        h.path.each do |d|
-          case d
-          when DIR_U
-            sum += e_vert[cc][cr - 1]
-            cr -= 1
-          when DIR_D
-            sum += e_vert[cc][cr]
-            cr += 1
-          when DIR_L
-            sum += e_horz[cr][cc - 1]
-            cc -= 1
-          when DIR_R
-            sum += e_horz[cr][cc]
-            cc += 1
-          end
+        if h.skip_until > l
+          next
         end
-        if h.b < sum * 0.95
-          diff = (h.b / 0.95 - sum) * ita / h.sum_ratio
-        elsif sum * 1.05 < h.b
-          diff = (h.b / 1.05 - sum) * ita / h.sum_ratio
+        sum = 0
+        h.hs.each do |p|
+          sum += @e_horz[p[0]][p[1]]
+        end
+        h.vs.each do |p|
+          sum += @e_vert[p[0]][p[1]]
+        end
+        r = h.b / sum
+        if r < dif_min
+          diff = (h.b / dif_min - sum) * ita / h.sum_ratio
+        elsif dif_max < r
+          diff = (h.b / dif_max - sum) * ita / h.sum_ratio
         else
+          if 0.99 < r && r < 1.01
+            h.skip_until = l + 10
+          elsif 0.97 < r && r < 1.03
+            h.skip_until = l + 4
+          elsif 0.96 < r && r < 1.04
+            h.skip_until = l + 2
+          end
+          # h.dif_hist << {0, h.b / sum}
+          # debugf("b:%d sum:%d diff:0\n", h.b, sum)
           next
         end
         # diff = (h.b - sum) * ita / sum_ratio
-        # diff = ((h.b - sum) * ita / h.path.size).to_i
+        # h.dif_hist << {diff.to_i, h.b / sum}
         # debugf("b:%d sum:%d diff:%d\n", h.b, sum, diff)
-        cr = h.sr
-        cc = h.sc
-        h.path.each do |d|
-          case d
-          when DIR_U
-            e_vert[cc][cr - 1] += (diff * 1.0 / (@c_vert[cc][cr - 1] + div)).to_i
-            # e_vert[cc][cr - 1] = {e_vert[cc][cr - 1], 1000}.max
-            # e_vert[cc][cr - 1] = {e_vert[cc][cr - 1], 9000}.min
-            cr -= 1
-          when DIR_D
-            e_vert[cc][cr] += (diff * 1.0 / (@c_vert[cc][cr] + div)).to_i
-            # e_vert[cc][cr] = {e_vert[cc][cr], 1000}.max
-            # e_vert[cc][cr] = {e_vert[cc][cr], 9000}.min
-            cr += 1
-          when DIR_L
-            e_horz[cr][cc - 1] += (diff * 1.0 / (@c_horz[cr][cc - 1] + div)).to_i
-            # e_horz[cr][cc - 1] = {e_horz[cr][cc - 1], 1000}.max
-            # e_horz[cr][cc - 1] = {e_horz[cr][cc - 1], 9000}.min
-            cc -= 1
-          when DIR_R
-            e_horz[cr][cc] += (diff * 1.0 / (@c_horz[cr][cc] + div)).to_i
-            # e_horz[cr][cc] = {e_horz[cr][cc], 1000}.max
-            # e_horz[cr][cc] = {e_horz[cr][cc], 9000}.min
-            cc += 1
-          end
+
+        h.hs.each do |p|
+          @e_horz[p[0]][p[1]] += (diff * 1.0 / (@c_horz[p[0]][p[1]] + div) + 0.5).to_i
+        end
+        h.vs.each do |p|
+          @e_vert[p[0]][p[1]] += (diff * 1.0 / (@c_vert[p[0]][p[1]] + div) + 0.5).to_i
         end
       end
       N.times do |i|
         (N - 1).times do |j|
-          e_horz[i][j] = {e_horz[i][j], 1000}.max
-          e_horz[i][j] = {e_horz[i][j], 9000}.min
-          e_vert[i][j] = {e_vert[i][j], 1000}.max
-          e_vert[i][j] = {e_vert[i][j], 9000}.min
+          @e_horz[i][j] = {@e_horz[i][j], 1000}.max
+          @e_horz[i][j] = {@e_horz[i][j], 9000}.min
+          @e_vert[i][j] = {@e_vert[i][j], 1000}.max
+          @e_vert[i][j] = {@e_vert[i][j], 9000}.min
         end
       end
-      @e_horz, e_horz = e_horz, @e_horz
-      @e_vert, e_vert = e_vert, @e_vert
       smoothing(3)
-      @e_horz, e_horz = e_horz, @e_horz
-      @e_vert, e_vert = e_vert, @e_vert
     end
-    debug("predict")
-    e_horz.each do |row|
-      debug(row.join(" "))
+    if @qi >= start_detect_x && @qi % 100 == 0 && !@is_m0
+      N.times do |i|
+        debug("detect_xh[#{i}]")
+        @xh[i] = detect_x(@e_horz[i])
+      end
+      N.times do |i|
+        debug("detect_xv[#{i}]")
+        @xv[i] = detect_x(@e_vert[i])
+      end
+      cnt_x = @xh.count { |v| v != N } + @xv.count { |v| v != N }
+      debug("cnt_x:#{cnt_x}")
+      if @qi == start_detect_x && cnt_x < 9
+        @is_m0 = true
+        @xh.fill(N)
+        @xv.fill(N)
+      end
     end
-    debug("")
-    e_vert.each do |row|
-      debug(row.join(" "))
+    # if @qi % 10 == 0
+    #   @history.each do |h|
+    #     debug(h.dif_hist.join("\n"))
+    #     debug("")
+    #   end
+    # end
+  end
+
+  def detect_x(row)
+    detect_th = (ENV["detect_th"]? || "2400").to_i
+    ave_pre = 0.0
+    ave_suf = 0.0
+    pre_sum = 0.0
+    pre_sum2 = 0.0
+    3.times do |i|
+      ave_pre += row[i]
+      ave_suf += row[N - 2 - i]
+      pre_sum += row[i]
+      pre_sum2 += row[i] * row[i]
     end
-    debug("")
-    @e_horz, e_horz = e_horz, @e_horz
-    @e_vert, e_vert = e_vert, @e_vert
+    ave_pre /= 3
+    ave_suf /= 3
+    if (ave_pre - ave_suf).abs < detect_th
+      return N
+    end
+    total = 0.0
+    total2 = 0.0
+    row.each do |v|
+      total += v
+      total2 += v * v
+    end
+    min_var = 1e20
+    min_i = N
+    3.upto(N - 4) do |i|
+      pre_sum += row[i]
+      pre_sum2 += row[i] * row[i]
+      suf_sum = total - pre_sum
+      suf_sum2 = total2 - pre_sum2
+      var_pre = pre_sum2 / (i + 1) - (pre_sum / (i + 1)) ** 2
+      var_suf = suf_sum2 / (N - i - 2) - (suf_sum / (N - i - 2)) ** 2
+      if var_pre + var_suf < min_var
+        min_var = var_pre + var_suf
+        min_i = i + 1
+      end
+    end
+    debug("min_var:#{min_var} min_i:#{min_i}")
+    return min_i
   end
 
   def postprocess
-    div = (ENV["postprocess_d"]? || "2").to_i
+    div = (ENV["repre_div"]? || "15").to_i
     ita = @ita
     @history.reverse.each do |h|
       sum = 0
       sum_ratio = 0.0
-      cr = h.sr
-      cc = h.sc
-      h.path.each do |d|
-        case d
-        when DIR_U
-          sum += @e_vert[cc][cr - 1]
-          sum_ratio += 1.0 / (@c_vert[cc][cr - 1] + div)
-          cr -= 1
-        when DIR_D
-          sum += @e_vert[cc][cr]
-          sum_ratio += 1.0 / (@c_vert[cc][cr] + div)
-          cr += 1
-        when DIR_L
-          sum += @e_horz[cr][cc - 1]
-          sum_ratio += 1.0 / (@c_horz[cr][cc - 1] + div)
-          cc -= 1
-        when DIR_R
-          sum += @e_horz[cr][cc]
-          sum_ratio += 1.0 / (@c_horz[cr][cc] + div)
-          cc += 1
-        end
+      h.hs.each do |p|
+        sum += @e_horz[p[0]][p[1]]
+        sum_ratio += 1.0 / (@c_horz[p[0]][p[1]] + div)
+      end
+      h.vs.each do |p|
+        sum += @e_vert[p[0]][p[1]]
+        sum_ratio += 1.0 / (@c_vert[p[0]][p[1]] + div)
       end
       diff = (h.b - sum) * ita / sum_ratio
-      # diff = ((h.b - sum) * ita / h.path.size).to_i
       # debugf("b:%d sum:%d diff:%d\n", h.b, sum, diff)
-      cr = h.sr
-      cc = h.sc
-      h.path.each do |d|
-        case d
-        when DIR_U
-          @e_vert[cc][cr - 1] += (diff * 1.0 / (@c_vert[cc][cr - 1] + div)).to_i
-          @e_vert[cc][cr - 1] = {@e_vert[cc][cr - 1], 1000}.max
-          @e_vert[cc][cr - 1] = {@e_vert[cc][cr - 1], 9000}.min
-          cr -= 1
-        when DIR_D
-          @e_vert[cc][cr] += (diff * 1.0 / (@c_vert[cc][cr] + div)).to_i
-          @e_vert[cc][cr] = {@e_vert[cc][cr], 1000}.max
-          @e_vert[cc][cr] = {@e_vert[cc][cr], 9000}.min
-          cr += 1
-        when DIR_L
-          @e_horz[cr][cc - 1] += (diff * 1.0 / (@c_horz[cr][cc - 1] + div)).to_i
-          @e_horz[cr][cc - 1] = {@e_horz[cr][cc - 1], 1000}.max
-          @e_horz[cr][cc - 1] = {@e_horz[cr][cc - 1], 9000}.min
-          cc -= 1
-        when DIR_R
-          @e_horz[cr][cc] += (diff * 1.0 / (@c_horz[cr][cc] + div)).to_i
-          @e_horz[cr][cc] = {@e_horz[cr][cc], 1000}.max
-          @e_horz[cr][cc] = {@e_horz[cr][cc], 9000}.min
-          cc += 1
-        end
+      h.hs.each do |p|
+        @e_horz[p[0]][p[1]] += (diff * 1.0 / (@c_horz[p[0]][p[1]] + div) + 0.5).to_i
+      end
+      h.vs.each do |p|
+        @e_vert[p[0]][p[1]] += (diff * 1.0 / (@c_vert[p[0]][p[1]] + div) + 0.5).to_i
       end
       ita = @ita2
+    end
+    N.times do |i|
+      (N - 1).times do |j|
+        @e_horz[i][j] = {@e_horz[i][j], 1000}.max
+        @e_horz[i][j] = {@e_horz[i][j], 9000}.min
+        @e_vert[i][j] = {@e_vert[i][j], 1000}.max
+        @e_vert[i][j] = {@e_vert[i][j], 9000}.min
+      end
     end
     len = (ENV["smo_l"]? || "3").to_i
     smoothing(len)
