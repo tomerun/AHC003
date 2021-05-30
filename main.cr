@@ -368,7 +368,7 @@ class Solver(Judge)
       path = select_path(sr, sc, tr, tc)
       rough_dist = @judge.response(rev ? path.reverse.map { |v| v ^ 1 } : path)
       @history << History.new(sr, sc, tr, tc, path, rough_dist)
-      postprocess(sr, sc, tr, tc, path, rough_dist)
+      postprocess()
       @qi += 1
       if @qi % 100 == 0
         @c_horz.each do |row|
@@ -447,7 +447,7 @@ class Solver(Judge)
         end
       end
       ave_cost = total_dist // ((sr - tr).abs + (sc - tc).abs)
-      debugf("%d ave_cost:%d th_ave_cost:%d\n", @qi, ave_cost, th_ave_cost)
+      # debugf("%d ave_cost:%d th_ave_cost:%d\n", @qi, ave_cost, th_ave_cost)
       break if ave_cost < th_ave_cost
     end
     ans = [] of Int32
@@ -473,7 +473,89 @@ class Solver(Judge)
     return ans.reverse
   end
 
-  def postprocess(sr, sc, tr, tc, path, b)
+  def predict
+    div = 2
+    ita = 0.2
+    e_horz = Array.new(N) { [5000] * (N - 1) }
+    e_vert = Array.new(N) { [5000] * (N - 1) }
+    10.times do
+      1000.times do
+        h = @history[@rnd.next_int(@history.size).to_i32]
+        sum = 0
+        sum_ratio = 0.0
+        cr = h.sr
+        cc = h.sc
+        h.path.each do |d|
+          case d
+          when DIR_U
+            sum += e_vert[cc][cr - 1]
+            sum_ratio += 1.0 / (@c_vert[cc][cr - 1] + div)
+            cr -= 1
+          when DIR_D
+            sum += e_vert[cc][cr]
+            sum_ratio += 1.0 / (@c_vert[cc][cr] + div)
+            cr += 1
+          when DIR_L
+            sum += e_horz[cr][cc - 1]
+            sum_ratio += 1.0 / (@c_horz[cr][cc - 1] + div)
+            cc -= 1
+          when DIR_R
+            sum += e_horz[cr][cc]
+            sum_ratio += 1.0 / (@c_horz[cr][cc] + div)
+            cc += 1
+          end
+        end
+        if h.b < sum * 0.95
+          diff = (h.b / 0.95 - sum) * ita / sum_ratio
+        elsif sum * 1.05 < h.b
+          diff = (h.b / 1.05 - sum) * ita / sum_ratio
+        else
+          next
+        end
+        # diff = (h.b - sum) * ita / sum_ratio
+        # diff = ((h.b - sum) * ita / h.path.size).to_i
+        # debugf("b:%d sum:%d diff:%d\n", h.b, sum, diff)
+        cr = h.sr
+        cc = h.sc
+        h.path.each do |d|
+          case d
+          when DIR_U
+            e_vert[cc][cr - 1] += (diff * 1.0 / (@c_vert[cc][cr - 1] + div)).to_i
+            e_vert[cc][cr - 1] = {e_vert[cc][cr - 1], 1000}.max
+            e_vert[cc][cr - 1] = {e_vert[cc][cr - 1], 9000}.min
+            cr -= 1
+          when DIR_D
+            e_vert[cc][cr] += (diff * 1.0 / (@c_vert[cc][cr] + div)).to_i
+            e_vert[cc][cr] = {e_vert[cc][cr], 1000}.max
+            e_vert[cc][cr] = {e_vert[cc][cr], 9000}.min
+            cr += 1
+          when DIR_L
+            e_horz[cr][cc - 1] += (diff * 1.0 / (@c_horz[cr][cc - 1] + div)).to_i
+            e_horz[cr][cc - 1] = {e_horz[cr][cc - 1], 1000}.max
+            e_horz[cr][cc - 1] = {e_horz[cr][cc - 1], 9000}.min
+            cc -= 1
+          when DIR_R
+            e_horz[cr][cc] += (diff * 1.0 / (@c_horz[cr][cc] + div)).to_i
+            e_horz[cr][cc] = {e_horz[cr][cc], 1000}.max
+            e_horz[cr][cc] = {e_horz[cr][cc], 9000}.min
+            cc += 1
+          end
+        end
+      end
+      # smoothing(3)
+    end
+    debug("without smoothing")
+    e_horz.each do |row|
+      debug(row.join(" "))
+    end
+    debug("")
+    e_vert.each do |row|
+      debug(row.join(" "))
+    end
+    debug("")
+  end
+
+  def postprocess
     div = (ENV["postprocess_d"]? || "2").to_i
     ita = @ita
     @history.reverse.each do |h|
@@ -532,7 +614,8 @@ class Solver(Judge)
       end
       ita = @ita2
     end
-    smoothing()
+    len = (ENV["smo_l"]? || "3").to_i
+    smoothing(len)
     # @e_horz.each do |row|
     #   debug(row.join(" "))
     # end
@@ -542,9 +625,8 @@ class Solver(Judge)
     # end
   end
 
-  def smoothing
+  def smoothing(len)
     mul = (ENV["smo_r"]? || "0.4").to_f
-    len = (ENV["smo_l"]? || "2").to_i
     sum = Array.new(N, 0)
     buf = Array.new(N - 1, 0)
     N.times do |i|
