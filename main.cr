@@ -10,6 +10,8 @@ DIR_L      = 2
 DIR_R      = 3
 DR         = [-1, 1, 0, 0]
 DC         = [0, 0, -1, 1]
+XH         = Array.new(N, N)
+XV         = Array.new(N, N)
 
 class XorShift
   TO_DOUBLE = 0.5 / (1u64 << 63)
@@ -99,8 +101,8 @@ class LocalJudge
       d = 100 + (2000 - 100) * (@seed - 200) // 99
     end
     debugf("m:%1d d:%4d\n", m, d)
-    @horz = generate_edge(d, m)
-    @vert = generate_edge(d, m).transpose
+    @horz = generate_edge(d, m, XH)
+    @vert = generate_edge(d, m, XV).transpose
     @sr = 0
     @sc = 0
     @tr = 0
@@ -118,10 +120,22 @@ class LocalJudge
         f << @vert[i].join(" ") << "\n"
       end
     end
+
+    debug("ground truth")
+    @horz.each do |row|
+      debug(row.map { |v| sprintf("%4d", v) }.join(" "))
+    end
+    debug("")
+    @vert.transpose.each do |row|
+      debug(row.map { |v| sprintf("%4d", v) }.join(" "))
+    end
+    debug("")
   end
 
-  private def generate_edge(d, m)
+  private def generate_edge(d, m, xs)
     ret = Array.new(N) { [0] * (N - 1) }
+    h0s = [] of Int32
+    h1s = [] of Int32
     N.times do |i|
       h = Array.new(2) { @rnd.rand(9000 - 1000 - 2 * d + 1) + 1000 + d }
       if m == 1
@@ -136,7 +150,13 @@ class LocalJudge
         delta = @rnd.rand(2 * d + 1) - d
         ret[i][j] = h[1] + delta
       end
+      h0s << h[0]
+      h1s << h[1]
+      xs[i] = x
     end
+    debug("e_H0:#{h0s.join(" ")}")
+    debug("e_H1:#{h1s.join(" ")}")
+    debug("x   :#{xs.map { |v| sprintf("%4d", v) }.join(" ")}")
     return ret
   end
 
@@ -348,6 +368,8 @@ class Solver(Judge)
     end
     @c_horz = Array(Array(Int32)).new(N) { [0] * (N - 1) }
     @c_vert = Array(Array(Int32)).new(N) { [0] * (N - 1) }
+    @xh = Array(Int32).new(N, N)
+    @xv = Array(Int32).new(N, N)
     @sp_visited = Array(Array(Int32)).new(N) { [INF] * N }
     @sp_dir = Array(Array(Int32)).new(N) { [0] * N }
     @sp_q = PriorityQueue(Tuple(Int32, Int32, Int32)).new(N * N)
@@ -370,13 +392,23 @@ class Solver(Judge)
       @history << History.new(sr, sc, tr, tc, path, rough_dist)
       postprocess()
       @qi += 1
-      if @qi % 100 == 0
-        @c_horz.each do |row|
-          debug(row.map { |v| sprintf("%2d", v) }.join(" "))
+      if @qi < 900 && @qi % 50 == 0
+        predict()
+        debug("with smoothing")
+        @e_horz.each do |row|
+          debug(row.join(" "))
         end
         debug("")
-        @c_vert.transpose.each do |row|
-          debug(row.map { |v| sprintf("%2d", v) }.join(" "))
+        @e_vert.each do |row|
+          debug(row.join(" "))
+        end
+        debug("")
+        @c_horz.each do |row|
+          debug(row.map { |v| sprintf("%3d", v) }.join(" "))
+        end
+        debug("")
+        @c_vert.each do |row|
+          debug(row.map { |v| sprintf("%3d", v) }.join(" "))
         end
         debug("")
       end
@@ -384,7 +416,7 @@ class Solver(Judge)
   end
 
   def select_path(sr, sc, tr, tc)
-    bonus_unvisited = (ENV["bonus"]? || "2000").to_i
+    bonus_unvisited = (ENV["bonus"]? || "1000").to_i + (ENV["bonus_t"]? || "40000").to_i // (@qi + 10)
     th_ave_cost = (ENV["th_ave_b"]? || "2000").to_i + @qi * (ENV["th_ave_m"]? || "4").to_i
     2.times do |li|
       @sp_q.clear
@@ -447,7 +479,7 @@ class Solver(Judge)
         end
       end
       ave_cost = total_dist // ((sr - tr).abs + (sc - tc).abs)
-      # debugf("%d ave_cost:%d th_ave_cost:%d\n", @qi, ave_cost, th_ave_cost)
+      debugf("%d ave_cost:%d th_ave_cost:%d\n", @qi, ave_cost, th_ave_cost)
       break if ave_cost < th_ave_cost
     end
     ans = [] of Int32
@@ -474,13 +506,18 @@ class Solver(Judge)
   end
 
   def predict
-    div = 2
-    ita = 0.2
+    div = (ENV["repre_div"]? || "2").to_i
+    ita = (ENV["repre_ita"]? || "0.5").to_f
+    rep = (ENV["repre_loop"]? || "200").to_i
     e_horz = Array.new(N) { [5000] * (N - 1) }
     e_vert = Array.new(N) { [5000] * (N - 1) }
-    10.times do
-      1000.times do
-        h = @history[@rnd.next_int(@history.size).to_i32]
+    rep.times do
+      hs = @history.dup
+      (@history.size - 1).times do |i|
+        pos = @rnd.next_int(@history.size - i).to_i + i
+        hs[i], hs[pos] = hs[pos], hs[i]
+      end
+      hs.each do |h|
         sum = 0
         sum_ratio = 0.0
         cr = h.sr
@@ -542,9 +579,13 @@ class Solver(Judge)
           end
         end
       end
-      # smoothing(3)
+      @e_horz, e_horz = e_horz, @e_horz
+      @e_vert, e_vert = e_vert, @e_vert
+      smoothing(3)
+      @e_horz, e_horz = e_horz, @e_horz
+      @e_vert, e_vert = e_vert, @e_vert
     end
-    debug("without smoothing")
+    debug("predict")
     e_horz.each do |row|
       debug(row.join(" "))
     end
@@ -553,6 +594,8 @@ class Solver(Judge)
       debug(row.join(" "))
     end
     debug("")
+    @e_horz, e_horz = e_horz, @e_horz
+    @e_vert, e_vert = e_vert, @e_vert
   end
 
   def postprocess
@@ -644,7 +687,12 @@ class Solver(Judge)
           left -= (right - N + 2)
           right = N - 2
         end
-        ave = (sum[right + 1] - sum[left]) / (len * 2 + 1)
+        if j < @xh[i] && @xh[i] <= right
+          right = @xh[i] - 1
+        elsif j >= @xh[i] && left < @xh[i]
+          left = @xh[i]
+        end
+        ave = (sum[right + 1] - sum[left]) / (right - left + 1)
         buf[j] = @e_horz[i][j] + ((ave - @e_horz[i][j]) * mul).to_i
       end
       (N - 1).times do |j|
@@ -666,7 +714,12 @@ class Solver(Judge)
           top -= (bottom - N + 2)
           bottom = N - 2
         end
-        ave = (sum[bottom + 1] - sum[top]) / (len * 2 + 1)
+        if j < @xv[i] && @xv[i] <= bottom
+          bottom = @xv[i] - 1
+        elsif j >= @xv[i] && top < @xv[i]
+          top = @xv[i]
+        end
+        ave = (sum[bottom + 1] - sum[top]) / (bottom - top + 1)
         buf[j] = @e_vert[i][j] + ((ave - @e_vert[i][j]) * mul).to_i
       end
       (N - 1).times do |j|
