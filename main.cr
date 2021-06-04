@@ -539,7 +539,17 @@ class Solver(Judge)
     div = (ENV["repre_div"]? || "15").to_i
     ita = (ENV["repre_ita"]? || "8").to_i * 0.1
     rep = (ENV["repre_loop"]? || "50").to_i
+    rep2 = (ENV["repre_loop2"]? || "60").to_i
+    reset_freq = (ENV["reset_freq"]? || "100").to_i
+    reset_until = (ENV["reset_until"]? || "900").to_i
     start_detect_x = (ENV["start_detect_x"]? || "500").to_i
+    if @qi <= reset_until && @qi % reset_freq == 0
+      N.times do |i|
+        @e_horz[i].fill(5000)
+        @e_vert[i].fill(5000)
+        rep = rep2
+      end
+    end
     {% if !flag?(:local) %}
       elapsed = Time.utc.to_unix_ms - START_TIME
       if elapsed > 1950
