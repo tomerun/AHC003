@@ -1,9 +1,5 @@
 # AHC003
 
-aws s3 sync s3://marathon-tester/AHC003 result --exclude "*" --include "*.txt"
-cat result/01/00/*.txt | cut -f 3 -d = | cut -f 1 -d . | pbcopy
-
-
 ## 2021-05-30
 
 22位まで落ちてた。さすがにね
